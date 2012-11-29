@@ -155,6 +155,12 @@ module.exports =
       test.ok typeof testRequire is "function"
       test.done()
 
+  "compile generates a source map": (test) ->
+    defaultPackage.compile (err, sources, paths) ->
+      test.ok !err
+      test.ok paths
+      test.done()
+
   "compile module with custom exports": (test) ->
     test.expect 3
 

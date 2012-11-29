@@ -39,14 +39,15 @@ exports.Package = class Package
     @cache        = config.cache ? true
     @mtimeCache   = {}
     @compileCache = {}
+    @sourceMap    = []
 
   compile: (callback) ->
     async.parallel [
       @compileDependencies
       @compileSources
-    ], (err, parts) ->
+    ], (err, parts) =>
       if err then callback err
-      else callback null, parts.join("\n")
+      else callback null, parts.join("\n"), @sourceMap
 
   compileDependencies: (callback) =>
     async.map @dependencies, @compileFile, (err, dependencySources) =>
@@ -54,6 +55,9 @@ exports.Package = class Package
       else callback null, dependencySources.join("\n")
 
   compileSources: (callback) =>
+
+    @sourceMap = []
+
     async.reduce @paths, {}, _.bind(@gatherSourcesFromPath, @), (err, sources) =>
       return callback err if err
 
@@ -114,10 +118,13 @@ exports.Package = class Package
       """
 
       index = 0
-      for name, {filename, source} of sources
+      for name, {filename, source, path} of sources
         result += if index++ is 0 then "" else ", "
         result += JSON.stringify name
         result += ": function(exports, require, module) {#{source}}"
+
+        if path
+          @sourceMap.push [name, path]
 
       result += """
         });\n
@@ -162,6 +169,7 @@ exports.Package = class Package
             sources[key] =
               filename: relativePath
               source:   source
+              path: path
             callback err, sources
     else
       callback null, sources

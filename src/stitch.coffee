@@ -1,6 +1,11 @@
 _     = require 'underscore'
 async = require 'async'
 fs    = require 'fs'
+redis = require 'redis'
+
+client = null
+
+@fileCache = {}
 
 {extname, join, normalize} = require 'path'
 
@@ -42,12 +47,27 @@ exports.Package = class Package
     @sourceMap    = []
 
   compile: (callback) ->
+    console.time 'compile files'
+
+    client = redis.createClient()
+
+    client.on 'error', (err) ->
+      client.closing = true
+      client.end()
+
     async.parallel [
       @compileDependencies
       @compileSources
     ], (err, parts) =>
-      if err then callback err
-      else callback null, parts.join("\n"), @sourceMap
+      if err
+        callback err
+      else
+        console.timeEnd 'compile files'
+
+        if client.connected
+          client.quit()
+
+        callback null, parts.join("\n"), @sourceMap
 
   compileDependencies: (callback) =>
     async.map @dependencies, @compileFile, (err, dependencySources) =>
@@ -57,6 +77,8 @@ exports.Package = class Package
   compileSources: (callback) =>
 
     @sourceMap = []
+
+    # console.warn { @paths }
 
     async.reduce @paths, {}, _.bind(@gatherSourcesFromPath, @), (err, sources) =>
       return callback err if err
@@ -146,6 +168,7 @@ exports.Package = class Package
 
 
   gatherSourcesFromPath: (sources, sourcePath, callback) ->
+
     fs.stat sourcePath, (err, stat) =>
       return callback err if err
 
@@ -157,6 +180,9 @@ exports.Package = class Package
         @gatherCompilableSource sources, sourcePath, callback
 
   gatherCompilableSource: (sources, path, callback) ->
+
+    # console.log 'gather compilable', sources
+
     if @compilers[extname(path).slice(1)]
       @getRelativePath path, (err, relativePath) =>
         return callback err if err
@@ -189,32 +215,53 @@ exports.Package = class Package
 
   compileFile: (path, callback) =>
     extension = extname(path).slice(1)
+    cacheKey = "stitch-cache-#{path}"
 
-    if @cache and @compileCache[path] and @mtimeCache[path] is @compileCache[path].mtime
-      callback null, @compileCache[path].source
-    else if compile = @compilers[extension]
-      source = null
-      mod =
-        _compile: (content, filename) ->
-          source = content
+    compileUnlessCached = (err, reply) =>
 
-      try
-        compile mod, path
+      if (! err) and reply and @mtimeCache[path] is reply.mtime
+        callback null, reply.source
 
-        if @cache and mtime = @mtimeCache[path]
-          @compileCache[path] = {mtime, source}
+      else if compile = @compilers[extension]
+        source = null
+        mod =
+          _compile: (content, filename) ->
+            source = content
 
-        callback null, source
-      catch err
-        if err instanceof Error
-          err.message = "can't compile #{path}\n#{err.message}"
-        else
-          err = new Error "can't compile #{path}\n#{err}"
-        callback err
+        try
+          compile mod, path
+
+          if mtime = @mtimeCache[path]
+
+            if client.connected
+
+              client.hmset cacheKey, 'mtime', mtime, 'source', source, ->
+                callback null, source
+
+            else
+              callback null, source
+
+          else
+            callback null, source
+
+        catch err
+          if err instanceof Error
+            err.message = "can't compile #{path}\n#{err.message}"
+          else
+            err = new Error "can't compile #{path}\n#{err}"
+          callback err
+
+      else
+        callback new Error "no compiler for '.#{extension}' files"
+
+    if client.connected
+      client.hgetall cacheKey, compileUnlessCached
+
     else
-      callback new Error "no compiler for '.#{extension}' files"
+      compileUnlessCached()
 
   walkTree: (directory, callback) ->
+
     fs.readdir directory, (err, files) =>
       return callback err if err
 
@@ -238,6 +285,7 @@ exports.Package = class Package
 
   getFilesInTree: (directory, callback) ->
     files = []
+    # console.warn 'get files in tree', directory
     @walkTree directory, (err, filename) ->
       if err
         callback err

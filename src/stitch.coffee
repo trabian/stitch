@@ -86,7 +86,9 @@ exports.Package = class Package
       result = """
         (function(/*! Stitch !*/) {
           if (!this.#{@identifier}) {
-            var modules = {}, cache = {}, require = function(name, root) {
+            var modules = {};
+            this.MODULES = modules;
+            var cache = {}, require = function(name, root) {
               var path = expand(root, name), altPath = expand(path, './index'), module = cache[path], altModule = cache[altPath], fn;
               if (module) {
                 return module.exports;
@@ -233,7 +235,7 @@ exports.Package = class Package
 
           if mtime = @mtimeCache[path]
 
-            if client.connected
+            if client?.connected
 
               client.hmset cacheKey, 'mtime', mtime, 'source', source, ->
                 callback null, source
@@ -254,7 +256,7 @@ exports.Package = class Package
       else
         callback new Error "no compiler for '.#{extension}' files"
 
-    if client.connected
+    if client?.connected
       client.hgetall cacheKey, compileUnlessCached
 
     else

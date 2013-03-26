@@ -87,9 +87,24 @@ exports.Package = class Package
         (function(/*! Stitch !*/) {
           if (!this.#{@identifier}) {
             var modules = {};
-            this.MODULES = modules;
-            var cache = {}, require = function(name, root) {
-              var path = expand(root, name), altPath = expand(path, './index'), module = cache[path], altModule = cache[altPath], fn;
+            var registry = {};
+            var cache = {}, require = function(name, root, skipRedefine) {
+
+              if (skipRedefine == null) {
+                skipRedefine = false;
+              }
+
+              var path = expand(root, name)
+
+              if (! skipRedefine) {
+                if (redefinedPath = registry[path]) {
+                  path = redefinedPath;
+                }
+              }
+
+              var altPath = expand(path, './index');
+
+              var module = cache[path], altModule = cache[altPath], fn;
               if (module) {
                 return module.exports;
               }
@@ -99,8 +114,8 @@ exports.Package = class Package
                 module = {id: path, exports: {}};
                 try {
                   cache[path] = module;
-                  fn(module.exports, function(name) {
-                    return require(name, dirname(path));
+                  fn(module.exports, function(name, skipRedefine) {
+                    return require(name, dirname(path), skipRedefine);
                   }, module);
                   return module.exports;
                 } catch (err) {
@@ -131,11 +146,17 @@ exports.Package = class Package
             };
             this.#{@identifier} = function(name) {
               return require(name, '');
-            }
+            };
             this.#{@identifier}.define = function(bundle) {
               for (var key in bundle)
                 modules[key] = bundle[key];
             };
+            this.#{@identifier}.register = function(bundle) {
+              for (var key in bundle)
+                registry[key] = bundle[key];
+            };
+            this.#{@identifier}.modules = modules;
+            this.#{@identifier}.registry = registry;
           }
           return this.#{@identifier}.define;
         }).call(this)({
